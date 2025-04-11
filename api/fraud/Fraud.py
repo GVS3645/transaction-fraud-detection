@@ -1,57 +1,49 @@
-import joblib
-import inflection
 import pandas as pd
+import joblib
+import os
 
 class Fraud:
-    
     def __init__(self):
-        self.minmaxscaler = joblib.load('../parameters/minmaxscaler_cycle1.joblib')
-        self.onehotencoder = joblib.load('../parameters/onehotencoder_cycle1.joblib')
-        
-    def data_cleaning(self, df1):
-        cols_old = df1.columns.tolist()
-        
-        snakecase = lambda i: inflection.underscore(i)
-        cols_new = list(map(snakecase, cols_old))
-        
-        df1.columns = cols_new
-        
-        return df1
-    
-    def feature_engineering(self, df2):
-        # step
-        df2['step_days'] = df2['step'].apply(lambda i: i/24)
-        df2['step_weeks'] = df2['step'].apply(lambda i: i/(24*7))
+        try:
+            self.ohe = joblib.load("functions/onehotencoder_cycle1.joblib")
+            self.scaler = joblib.load("functions/minmaxscaler_cycle1.joblib")
+        except FileNotFoundError as e:
+            raise FileNotFoundError(f"🚨 Required file not found: {e}")
+        except Exception as e:
+            raise RuntimeError(f"🚨 Error loading encoder/scaler: {e}")
 
-        # difference between initial balance before the transaction and new balance after the transaction
-        df2['diff_new_old_balance'] = df2['newbalance_orig'] - df2['oldbalance_org']
+    def data_cleaning(self, df: pd.DataFrame) -> pd.DataFrame:
+        return df.copy()
 
-        # difference between initial balance recipient before the transaction and new balance recipient after the transaction.
-        df2['diff_new_old_destiny'] = df2['newbalance_dest'] - df2['oldbalance_dest']
+    def feature_engineering(self, df: pd.DataFrame) -> pd.DataFrame:
+        df['errorbalanceOrg'] = df['newbalanceOrig'] + df['amount'] - df['oldbalanceOrg']
+        df['errorbalanceDest'] = df['oldbalanceDest'] + df['amount'] - df['newbalanceDest']
+        return df
 
-        # name orig and name dest
-        df2['name_orig'] = df2['name_orig'].apply(lambda i: i[0])
-        df2['name_dest'] = df2['name_dest'].apply(lambda i: i[0])
-        
-        return df2.drop(columns=['name_orig', 'name_dest', 
-                      'step_weeks', 'step_days'], axis=1)
-    
-    def data_preparation(self, df3):
-        # OneHotEncoder
-        df3 = self.onehotencoder.transform(df3)
+    def data_preparation(self, df: pd.DataFrame) -> pd.DataFrame:
+        try:
+            df_type = self.ohe.transform(df[['type']])
+        except Exception as e:
+            raise ValueError(f"🚨 OneHotEncoder failed: {e}")
 
-        # Rescaling 
-        num_columns = ['amount', 'oldbalance_org', 'newbalance_orig', 'oldbalance_dest', 
-                       'newbalance_dest', 'diff_new_old_balance', 'diff_new_old_destiny']
-        df3[num_columns] = self.minmaxscaler.transform(df3[num_columns])
-        
-        # selected columns
-        final_columns_selected = ['step', 'oldbalance_org', 'newbalance_orig', 'newbalance_dest', 
-                                  'diff_new_old_balance', 'diff_new_old_destiny', 'type_TRANSFER']
-        return df3[final_columns_selected]
-    
-    def get_prediction(self, model, original_data, test_data):
-        pred = model.predict(test_data)
+        df_type_df = pd.DataFrame(df_type, columns=self.ohe.get_feature_names_out(['type']))
+        df.reset_index(drop=True, inplace=True)
+        df_type_df.reset_index(drop=True, inplace=True)
+        df = pd.concat([df, df_type_df], axis=1)
+        df.drop(columns=['type'], inplace=True)
+
+        try:
+            df_scaled = self.scaler.transform(df)
+        except Exception as e:
+            raise ValueError(f"🚨 Scaler failed: {e}")
+
+        return pd.DataFrame(df_scaled, columns=df.columns)
+
+    def get_prediction(self, model, original_data, test_data) -> pd.DataFrame:
+        try:
+            pred = model.predict(test_data)
+        except Exception as e:
+            raise RuntimeError(f"🚨 Prediction failed: {e}")
+
         original_data['prediction'] = pred
-        
-        return original_data.to_json(orient="records", date_format="iso")
+        return original_data
