@@ -3,7 +3,7 @@
 import streamlit as st
 import pandas as pd
 import joblib
-from fraud.Fraud import Fraud
+from api.fraud.Fraud import Fraud
 
 # Load the trained model
 model = joblib.load('models/model_cycle1.joblib')
